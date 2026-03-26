@@ -74,7 +74,7 @@ def init(force):
     db = MigrationDB()
     db.set_meta("created_at", now)
     db.close()
-    console.print(f"[green]✅ Created {MigrationDB.DEFAULT_DB if hasattr(MigrationDB, 'DEFAULT_DB') else 'tg_migrate.db'}[/green]")
+    console.print(f"[green]✅ Created tg_migrate.db[/green]")
     console.print()
     console.print("[dim]Next: edit migrate.yaml, then run 'tg-migrate import'[/dim]")
 
@@ -112,19 +112,32 @@ def import_users(config_path, env_file, import_file, bot_name):
 
 def _import_csv(db: MigrationDB, cfg: MigrateConfig, filepath: str, bot_override: str | None):
     console.print(f"[cyan]Importing from CSV: {filepath}[/cyan]")
-    with open(filepath, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        count = 0
-        for row in reader:
-            tg_id = str(row.get(cfg.users.tg_id_col, "")).strip()
-            if not tg_id:
-                continue
-            name = row.get(cfg.users.name_col, "")
-            username = row.get(cfg.users.username_col, "")
-            role = row.get(cfg.users.role_col, "")
-            bot = bot_override or row.get(cfg.users.bot_col, cfg.bots[0].name if cfg.bots else "main")
-            db.upsert_user(tg_id, bot, name=name, username=username, role=role)
-            count += 1
+    # Try utf-8-sig first (handles Windows BOM), fall back to utf-8
+    for encoding in ("utf-8-sig", "utf-8"):
+        try:
+            with open(filepath, newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+            # Verify tg_id column exists
+            if rows and cfg.users.tg_id_col in rows[0]:
+                break
+        except (UnicodeDecodeError, KeyError):
+            continue
+    else:
+        console.print(f"[red]Could not parse CSV: column '{cfg.users.tg_id_col}' not found[/red]")
+        return
+
+    count = 0
+    for row in rows:
+        tg_id = str(row.get(cfg.users.tg_id_col, "")).strip()
+        if not tg_id:
+            continue
+        name = row.get(cfg.users.name_col, "")
+        username = row.get(cfg.users.username_col, "")
+        role = row.get(cfg.users.role_col, "")
+        bot = bot_override or row.get(cfg.users.bot_col, cfg.bots[0].name if cfg.bots else "main")
+        db.upsert_user(tg_id, bot, name=name, username=username, role=role)
+        count += 1
     console.print(f"[green]✅ Imported {count} users from CSV[/green]")
 
 
@@ -165,6 +178,7 @@ def _import_supabase(db: MigrationDB, cfg: MigrateConfig, bot_override: str | No
 
     sb = create_client(url, key)
     total = 0
+    PAGE_SIZE = 1000  # Supabase default limit — must paginate!
 
     for tbl in cfg.users.tables:
         table_name = tbl["table"]
@@ -174,10 +188,19 @@ def _import_supabase(db: MigrationDB, cfg: MigrateConfig, bot_override: str | No
         bot = bot_override or tbl.get("bot", cfg.bots[0].name if cfg.bots else "main")
 
         console.print(f"[cyan]Importing from Supabase table: {table_name}[/cyan]")
-        rows = sb.table(table_name).select("*").execute().data
+
+        # Paginate to avoid 1000-row default limit
+        all_rows = []
+        offset = 0
+        while True:
+            batch = sb.table(table_name).select("*").range(offset, offset + PAGE_SIZE - 1).execute().data
+            all_rows.extend(batch)
+            if len(batch) < PAGE_SIZE:
+                break
+            offset += PAGE_SIZE
 
         count = 0
-        for row in rows:
+        for row in all_rows:
             tg_id = str(row.get(tg_col, "")).strip()
             if not tg_id or tg_id == "None":
                 continue

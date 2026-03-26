@@ -12,6 +12,30 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+def _strip_comments(text: str) -> str:
+    """Strip Python # comments from code text (preserves strings)."""
+    # Simple heuristic: remove everything after # that is not inside quotes
+    lines = []
+    for line in text.split("\n"):
+        # Find # that's not inside a string
+        in_single = False
+        in_double = False
+        result = []
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if ch == "'" and not in_double:
+                in_single = not in_single
+            elif ch == '"' and not in_single:
+                in_double = not in_double
+            elif ch == '#' and not in_single and not in_double:
+                break
+            result.append(ch)
+            i += 1
+        lines.append("".join(result))
+    return "\n".join(lines)
+
+
 @dataclass
 class Finding:
     check: str
@@ -153,8 +177,10 @@ def scan_file(filepath: Path) -> list[Finding]:
             start = max(0, i - ctx)
             end = min(len(lines), i + ctx)
             context_block = "\n".join(lines[start:end])
+            # Strip comments so that TODOs/notes don't suppress findings
+            context_code = _strip_comments(context_block)
 
-            if anti_pattern and anti_pattern.search(context_block):
+            if anti_pattern and anti_pattern.search(context_code):
                 continue
 
             findings.append(Finding(
