@@ -1,0 +1,68 @@
+# tg-migrate configuration
+# See: https://github.com/Botable-dev/tg-migrate
+
+project: my-bot
+migration_date: "2026-03-26T19:51:19.195472+00:00"
+db_path: tg_migrate.db
+env_file: .env
+
+# Bot definitions — old token → new token mapping
+bots:
+  - name: main
+    old_token_env: OLD_TELEGRAM_BOT_TOKEN
+    new_token_env: TELEGRAM_BOT_TOKEN
+    new_username: "@MyNewBot"
+
+  # Add more bots if needed:
+  # - name: admin
+  #   old_token_env: OLD_ADMIN_BOT_TOKEN
+  #   new_token_env: ADMIN_BOT_TOKEN
+  #   new_username: "@MyNewAdminBot"
+
+# Where to load users from
+users:
+  source: csv                   # csv | json | supabase
+  file: users.csv               # CSV with columns: tg_id, name, role, bot
+  tg_id_col: tg_id
+  name_col: name
+  role_col: role
+  bot_col: bot                  # maps user to bot name
+
+  # Supabase import (alternative):
+  # source: supabase
+  # supabase_url_env: SUPABASE_URL
+  # supabase_key_env: SUPABASE_KEY
+  # tables:
+  #   - table: students
+  #     tg_id_col: tg_id
+  #     name_col: name
+  #     role: student
+  #     bot: main
+  #   - table: staff
+  #     tg_id_col: tg_id
+  #     name_col: name
+  #     role: teacher
+  #     bot: main
+
+# Probe settings — how to check if users can receive messages
+probe:
+  method: getChat               # getChat (silent) | send_message (sends a test msg)
+  test_message: "🔄 Migration check — please ignore."
+  concurrency: 5
+  delay_ms: 100
+
+# Redirect bot message template
+redirect:
+  message: |
+    🔄 This bot has moved!
+
+    Please open the new bot and press /start:
+    👉 {new_username}
+
+    All notifications are now sent there.
+  drop_pending: true
+
+# Telegram alerts (migration progress to admin chat)
+alerts:
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  chat_id_env: ADMIN_CHAT_ID
